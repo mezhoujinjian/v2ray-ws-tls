@@ -1,19 +1,19 @@
 #!/bin/bash
-function blue(){
+blue(){
     echo -e "\033[34m\033[01m$1\033[0m"
 }
-function green(){
+green(){
     echo -e "\033[32m\033[01m$1\033[0m"
 }
-function red(){
+red(){
     echo -e "\033[31m\033[01m$1\033[0m"
 }
-function yellow(){
+yellow(){
     echo -e "\033[33m\033[01m$1\033[0m"
 }
 
-function check_os(){
-green "系统支持检测"
+check_os(){
+green "Check Release"
 sleep 3s
 if [[ -f /etc/redhat-release ]]; then
     release="centos"
@@ -39,83 +39,70 @@ elif cat /proc/version | grep -Eqi "centos|red hat|redhat"; then
 fi
 if [ "$release" == "centos" ]; then
     if  [ -n "$(grep ' 6\.' /etc/redhat-release)" ] ;then
-    red "==============="
-    red "当前系统不受支持"
-    red "==============="
+    red "CentOS is 6 not supported."
     exit
     fi
     if  [ -n "$(grep ' 5\.' /etc/redhat-release)" ] ;then
-    red "==============="
-    red "当前系统不受支持"
-    red "==============="
+    red "CentOS 5 is not supported."
     exit
     fi
+    if [ -f "/etc/selinux/config" ]; then
+        CHECK=$(grep SELINUX= /etc/selinux/config | grep -v "#")
+        if [ "$CHECK" != "SELINUX=disabled" ]; then
+            green "SELinux is not disabled, add port 80/443 to SELinux rules."
+	          yum install -y policycoreutils-python >/dev/null 2>&1
+            semanage port -a -t http_port_t -p tcp 80
+            semanage port -a -t http_port_t -p tcp 443
+        fi
+    fi
+    firewall_status=`firewall-cmd --state`
+    if [ "$firewall_status" == "running" ]; then
+        green "FireWalld is not disabled, add port 80/443 to FireWalld rules."
+        firewall-cmd --zone=public --add-port=80/tcp --permanent
+        firewall-cmd --zone=public --add-port=443/tcp --permanent
+        firewall-cmd --reload
+    fi
     rpm -Uvh http://nginx.org/packages/centos/7/noarch/RPMS/nginx-release-centos-7-0.el7.ngx.noarch.rpm >/dev/null 2>&1
-    green "开始安装nginx编译依赖"
+    green "Prepare to install nginx."
     yum install -y libtool perl-core zlib-devel gcc pcre* >/dev/null 2>&1
 elif [ "$release" == "ubuntu" ]; then
     if  [ -n "$(grep ' 14\.' /etc/os-release)" ] ;then
-    red "==============="
-    red "当前系统不受支持"
-    red "==============="
+    red "Ubuntu 14 is not supported."
     exit
     fi
     if  [ -n "$(grep ' 12\.' /etc/os-release)" ] ;then
-    red "==============="
-    red "当前系统不受支持"
-    red "==============="
+    red "Ubuntu 12 is not supported."
     exit
     fi
     ufw_status=`systemctl status ufw | grep "Active: active"`
     if [ -n "$ufw_status" ]; then
         ufw allow 80/tcp
         ufw allow 443/tcp
-	ufw reload
+	      ufw reload
     fi
     apt-get update >/dev/null 2>&1
-    green "开始安装nginx编译依赖"
+    green "Prepare to install nginx."
     apt-get install -y build-essential libpcre3 libpcre3-dev zlib1g-dev liblua5.1-dev libluajit-5.1-dev libgeoip-dev google-perftools libgoogle-perftools-dev >/dev/null 2>&1
 elif [ "$release" == "debian" ]; then
     apt-get update >/dev/null 2>&1
-    green "开始安装nginx编译依赖"
+    green "Prepare to install nginx."
     apt-get install -y build-essential libpcre3 libpcre3-dev zlib1g-dev liblua5.1-dev libluajit-5.1-dev libgeoip-dev google-perftools libgoogle-perftools-dev >/dev/null 2>&1
 fi
 }
 
 function check_env(){
-green "安装环境监测"
-sleep 3s
-if [ -f "/etc/selinux/config" ]; then
-    CHECK=$(grep SELINUX= /etc/selinux/config | grep -v "#")
-    if [ "$CHECK" != "SELINUX=disabled" ]; then
-        green "检测到SELinux开启状态，添加开放80/443端口规则"
-	yum install -y policycoreutils-python >/dev/null 2>&1
-        semanage port -a -t http_port_t -p tcp 80
-        semanage port -a -t http_port_t -p tcp 443
-    fi
-fi
-firewall_status=`firewall-cmd --state`
-if [ "$firewall_status" == "running" ]; then
-    green "检测到firewalld开启状态，添加放行80/443端口规则"
-    firewall-cmd --zone=public --add-port=80/tcp --permanent
-    firewall-cmd --zone=public --add-port=443/tcp --permanent
-    firewall-cmd --reload
-fi
+sleep 1s
 $systemPackage -y install net-tools socat >/dev/null 2>&1
 Port80=`netstat -tlpn | awk -F '[: ]+' '$1=="tcp"{print $5}' | grep -w 80`
 Port443=`netstat -tlpn | awk -F '[: ]+' '$1=="tcp"{print $5}' | grep -w 443`
 if [ -n "$Port80" ]; then
     process80=`netstat -tlpn | awk -F '[: ]+' '$5=="80"{print $9}'`
-    red "==========================================================="
-    red "检测到80端口被占用，占用进程为：${process80}，本次安装结束"
-    red "==========================================================="
+    red "Port 80 is occupied, Process name : ${process80}, exit."
     exit 1
 fi
 if [ -n "$Port443" ]; then
     process443=`netstat -tlpn | awk -F '[: ]+' '$5=="443"{print $9}'`
-    red "============================================================="
-    red "检测到443端口被占用，占用进程为：${process443}，本次安装结束"
-    red "============================================================="
+    red "Port 443 is occupied, Process name : ${process443}, exit."
     exit 1
 fi
 }
@@ -130,7 +117,7 @@ function install_nginx(){
     tar xf nginx-1.15.8.tar.gz && rm nginx-1.15.8.tar.gz >/dev/null 2>&1
     cd nginx-1.15.8
     ./configure --prefix=/etc/nginx --with-openssl=../openssl-1.1.1a --with-openssl-opt='enable-tls1_3' --with-http_v2_module --with-http_ssl_module --with-http_gzip_static_module --with-http_stub_status_module --with-http_sub_module --with-stream --with-stream_ssl_module  >/dev/null 2>&1
-    green "开始编译安装nginx，编译等待时间与硬件性能相关，请耐心等待，通常需要几到十几分钟"
+    green "Start to compile and install nginx, the compiling waiting time is related to the hardware performance, please be patient, it usually takes several to ten minutes."
     sleep 3s
     make 
     make install
@@ -177,11 +164,9 @@ server {
     index index.php index.html;
     ssl_certificate /etc/nginx/ssl/fullchain.cer; 
     ssl_certificate_key /etc/nginx/ssl/$your_domain.key;
-    #TLS 版本控制
-    ssl_protocols   TLSv1 TLSv1.1 TLSv1.2 TLSv1.3;
+    ssl_protocols   TLSv1.2 TLSv1.3;
     ssl_ciphers     'TLS13-AES-256-GCM-SHA384:TLS13-CHACHA20-POLY1305-SHA256:TLS13-AES-128-GCM-SHA256:TLS13-AES-128-CCM-8-SHA256:TLS13-AES-128-CCM-SHA256:EECDH+CHACHA20:EECDH+CHACHA20-draft:EECDH+ECDSA+AES128:EECDH+aRSA+AES128:RSA+AES128:EECDH+ECDSA+AES256:EECDH+aRSA+AES256:RSA+AES256:EECDH+ECDSA+3DES:EECDH+aRSA+3DES:RSA+3DES:!MD5';
     ssl_prefer_server_ciphers   on;
-    # 开启 1.3 0-RTT
     ssl_early_data  on;
     ssl_stapling on;
     ssl_stapling_verify on;
@@ -220,26 +205,18 @@ install_v2ray
 #安装nginx
 function install(){
     $systemPackage install -y wget curl unzip >/dev/null 2>&1
-    green "======================="
-    blue "请输入绑定到本VPS的域名"
-    green "======================="
+    blue "Eenter your domain:"
     read your_domain
     real_addr=`ping ${your_domain} -c 1 | sed '1{s/[^(]*(//;s/).*//;q}'`
     local_addr=`curl ipv4.icanhazip.com`
     if [ $real_addr == $local_addr ] ; then
-        green "=========================================="
-	green "         域名解析正常，开始安装"
-	green "=========================================="
+	green "DNS records are correct."
         install_nginx
     else
-        red "===================================="
-	red "域名解析地址与本VPS IP地址不一致"
-	red "若你确认解析成功你可强制脚本继续运行"
-	red "===================================="
-	read -p "是否强制运行 ?请输入 [Y/n] :" yn
+	red "DNS records are not correct."
+	read -p "Still process ? Please enter [Y/n] :" yn
 	[ -z "${yn}" ] && yn="y"
 	if [[ $yn == [Yy] ]]; then
-            green "强制继续运行脚本"
 	    sleep 1s
 	    install_nginx
 	else
@@ -274,9 +251,7 @@ cat > /usr/local/etc/v2ray/config.json<<-EOF
           "email": "$v2uuid@blank.blank"
          }
        ],
-       "decryption": "none",
-       "fallback": {},
-       "fallback_h2": {}
+       "decryption": "none"
     },
     "streamSettings": {
       "network": "ws",
@@ -296,6 +271,7 @@ EOF
     rm -f ./*
     wget https://github.com/atrandys/v2ray-ws-tls/raw/master/web.zip >/dev/null 2>&1
     unzip web.zip >/dev/null 2>&1
+    systemctl enable v2ray.service
     systemctl restart v2ray.service
     systemctl restart nginx.service    
     
@@ -314,16 +290,15 @@ uuid：${v2uuid}
 }
 EOF
 
-green "=============================="
-green "         安装已经完成"
-green "===========配置参数============"
-green "地址:${your_domain}"
-green "端口:443"
-green "uuid:${v2uuid}"
-green "传输协议:ws"
-green "路径:${newpath}"
-green "底层传输:tls"
-green "allowInsecure: False"
+green "Installation is complete."
+green
+green "Address      :${your_domain}"
+green "Port         :443"
+green "UUID         :${v2uuid}"
+green "Protocol     :ws"
+green "Path         :${newpath}"
+green "TLSSetting   :tls"
+green "AllowInsecure:False"
 green 
 }
 
@@ -338,7 +313,7 @@ function remove_v2ray(){
     rm -rf /etc/systemd/system/v2ray*
     rm -rf /etc/nginx
     
-    green "nginx、v2ray已删除"
+    green "nginx & v2ray has been deleted."
     
 }
 
@@ -349,12 +324,12 @@ function start_menu(){
     green " OS support : centos7/debian9+/ubuntu16.04+                       "
     green " ==============================================="
     echo
-    green " 1. Install v2ray+ws+tls1.3 vless"
+    green " 1. Install vless + tcp + tls1.3"
     green " 2. Update v2ray"
     red " 3. Remove v2ray"
     yellow " 0. Exit"
     echo
-    read -p "Pls enter a number:" num
+    read -p "Enter a number:" num
     case "$num" in
     1)
     check_os
@@ -373,7 +348,7 @@ function start_menu(){
     ;;
     *)
     clear
-    red "Enter the correct number"
+    red "Enter a correct number"
     sleep 2s
     start_menu
     ;;
